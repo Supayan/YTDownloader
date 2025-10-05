@@ -1,0 +1,72 @@
+Getting started - beginner-friendly installation and run instructions
+
+This guide walks you through setting up and running the YouTube downloader on Linux or Windows.
+
+1) Clone or copy the project files
+   - If you downloaded a zip, extract it to a folder. If you cloned from a repository, skip this.
+
+2) Create & activate a Python virtual environment (recommended)
+
+Linux / macOS (bash):
+
+    python3 -m venv .venv
+    source .venv/bin/activate
+
+Windows (PowerShell):
+
+    python -m venv .venv
+    .\.venv\Scripts\Activate.ps1
+
+Windows (CMD):
+
+    python -m venv .venv
+    .\.venv\Scripts\activate.bat
+
+3) Install Python dependencies
+
+    pip install -r requirements.txt
+
+Notes:
+- This will install `pytube` and `yt-dlp`. If you prefer the latest pytube from the repository, run:
+
+    pip install git+https://github.com/pytube/pytube
+
+4) Install ffmpeg (required for audio extraction)
+
+Linux (Debian/Ubuntu):
+
+    sudo apt update
+    sudo apt install ffmpeg
+
+macOS (Homebrew):
+
+    brew install ffmpeg
+
+Windows:
+
+    Download ffmpeg from https://ffmpeg.org/download.html and add the `bin` folder to your PATH.
+
+5) Run the CLI (dry-run first)
+
+    python main.py "<YOUTUBE_URL>" --type audio --dry-run
+
+Example:
+
+    python main.py "https://www.youtube.com/watch?v=dQw4w9WgXcQ" --type video
+
+6) Change output directory (optional)
+
+    python main.py "<YOUTUBE_URL>" --type audio --out /path/to/folder
+
+7) Troubleshooting
+
+- If you see HTTP 400 errors when pytube initializes, try updating pytube or installing yt-dlp and retry.
+- If audio extraction fails, confirm `ffmpeg` is installed and in PATH.
+- If filenames look odd, check the downloader code for filename sanitization. Report any stack traces for help.
+
+8) Uploading to GitHub (optional)
+
+See `README.md` or the short steps below to initialize a git repo and push to GitHub.
+
+---
+This file was generated to help beginners set up the project. If you want, I can add a PowerShell script or shell script that automates these steps.
