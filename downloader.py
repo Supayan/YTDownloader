@@ -3,6 +3,9 @@ from pytube import request as pytube_request
 import os
 import time
 import traceback
+import re
+import subprocess
+import shutil
 try:
     import yt_dlp
 except Exception:
@@ -27,6 +30,34 @@ def check_path_exists():
     if not os.path.exists(DOWNLOAD_PATH):
         os.makedirs(DOWNLOAD_PATH, exist_ok=True)
     return DOWNLOAD_PATH
+
+
+def sanitize_filename(name: str, max_len: int = 200) -> str:
+    """Return a filesystem-safe filename trimmed to max_len."""
+    # Replace path separators and illegal chars
+    name = re.sub(r'[\\/:*?"<>|\n\r]+', '_', name)
+    name = name.strip()
+    if len(name) > max_len:
+        name = name[:max_len].rsplit(' ', 1)[0]
+    return name
+
+
+def ffmpeg_available() -> bool:
+    return shutil.which('ffmpeg') is not None
+
+
+def merge_video_audio(video_path: str, audio_path: str, out_path: str) -> None:
+    """Merge video and audio into out_path using ffmpeg (lossless copy when possible)."""
+    if not ffmpeg_available():
+        raise RuntimeError('ffmpeg not found on PATH; required to merge video/audio')
+    cmd = [
+        'ffmpeg', '-y', '-i', video_path, '-i', audio_path,
+        '-c', 'copy', out_path
+    ]
+    # Run merge and raise on error
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if proc.returncode != 0:
+        raise RuntimeError(f'ffmpeg merge failed: {proc.stderr.decode(errors="ignore")}')
 
 def download_playlist(playlist_url, download_type):
     playlist = Playlist(playlist_url)
@@ -104,25 +135,61 @@ def download_video(url, download_type):
         
         path = check_path_exists()
         
+        title_safe = sanitize_filename(yt.title)
         if download_type == 'video':
-            print(f'\nFetching video streams for: {yt.title}')
-            # Get all streams and select the highest resolution mp4
-            streams = yt.streams.filter(progressive=True, file_extension='mp4')
-            if not streams:
-                raise Exception("No suitable video streams found")
-            stream = streams.get_highest_resolution()
-            print(f'Downloading video quality: {stream.resolution}')
-            stream.download(output_path=path, filename=f'{yt.title}.mp4')
-            
+            print(f'\nFetching best video/audio for: {yt.title}')
+            # Prefer DASH streams (separate video+audio) for best quality
+            video_streams = yt.streams.filter(adaptive=True, file_extension='mp4', only_video=True).order_by('resolution').desc()
+            audio_streams = yt.streams.filter(only_audio=True).order_by('abr').desc()
+
+            # Pick best audio
+            best_audio = audio_streams.first() if audio_streams else None
+
+            # Pick best video (non-progressive) if available; otherwise fallback to progressive
+            best_video = None
+            if video_streams:
+                best_video = video_streams.first()
+            else:
+                prog_streams = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc()
+                best_video = prog_streams.first() if prog_streams else None
+
+            if best_video and best_audio and (best_video.itag != best_audio.itag):
+                # Download video and audio separately then merge
+                video_file = os.path.join(path, f"{title_safe}_video.{best_video.subtype}")
+                audio_file = os.path.join(path, f"{title_safe}_audio.{best_audio.subtype}")
+                out_file = os.path.join(path, f"{title_safe}.mp4")
+                print(f'Downloading video stream: {getattr(best_video, "resolution", "unknown")}')
+                best_video.download(output_path=path, filename=os.path.basename(video_file))
+                print('Downloading best audio stream')
+                best_audio.download(output_path=path, filename=os.path.basename(audio_file))
+                print('Merging audio and video with ffmpeg')
+                merge_video_audio(video_file, audio_file, out_file)
+                # Optionally remove intermediate files
+                try:
+                    os.remove(video_file)
+                    os.remove(audio_file)
+                except Exception:
+                    pass
+            elif best_video:
+                # Progressive or single-file video
+                out_file = os.path.join(path, f"{title_safe}.{best_video.subtype}")
+                print(f'Downloading progressive or single-file video: {getattr(best_video, "resolution", "unknown")}')
+                best_video.download(output_path=path, filename=os.path.basename(out_file))
+            else:
+                raise Exception('No suitable video streams found')
+
         elif download_type == 'audio':
-            print(f'\nFetching audio streams for: {yt.title}')
-            # Get audio stream
-            audio_streams = yt.streams.filter(only_audio=True)
+            print(f'\nFetching best audio for: {yt.title}')
+            # Select best audio available
+            audio_streams = yt.streams.filter(only_audio=True).order_by('abr').desc()
             if not audio_streams:
-                raise Exception("No suitable audio streams found")
-            audio_stream = audio_streams.first()
-            print('Downloading audio')
-            audio_stream.download(output_path=path, filename=f'{yt.title}_audio.mp3')
+                raise Exception('No suitable audio streams found')
+            best_audio = audio_streams.first()
+            out_file = os.path.join(path, f"{title_safe}.{best_audio.subtype}")
+            print(f'Downloading audio quality: {getattr(best_audio, "abr", "unknown")}')
+            best_audio.download(output_path=path, filename=os.path.basename(out_file))
+            # If user wants mp3 ensure ffmpeg available and convert
+            # (we leave as-is by default to preserve best quality)
             
         print(f'\nDownload completed: {yt.title}')
         
